@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Daftar Session WhatsApp</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 8px 12px; border: 1px solid #ddd; text-align: left; }
+  th { background-color: #f4f4f4; }
+</style>
+</head>
+<body>
+  <h1>Daftar Session WhatsApp</h1>
+  <table id="sessions-table">
+    <thead>
+      <tr>
+        <th>Session ID</th>
+        <th>QR Data (Preview)</th>
+        <th>Status Ready</th>
+        <th>Dibuat</th>
+        <th>Terakhir Update</th>
+        <th>Aksi</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td colspan="5">Loading data...</td></tr>
+    </tbody>
+  </table>
+
+  <script>
+    async function loadSessions() {
+      try {
+        const res = await fetch('/api/sessions');
+        const sessions = await res.json();
+        const tbody = document.querySelector('#sessions-table tbody');
+        tbody.innerHTML = '';
+
+        if (sessions.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5">Belum ada data session.</td></tr>';
+          return;
+        }
+
+        sessions.forEach(s => {
+          const tr = document.createElement('tr');
+
+          // sessionId
+          const tdSessionId = document.createElement('td');
+          tdSessionId.textContent = s.sessionId;
+          tr.appendChild(tdSessionId);
+
+          // qrData preview (tampilkan gambar jika ada)
+          const tdQrData = document.createElement('td');
+          if (s.qrData) {
+            const img = document.createElement('img');
+            img.src = s.qrData;
+            img.alt = 'QR Code';
+            img.style.width = '100px';
+            tdQrData.appendChild(img);
+          } else {
+            tdQrData.textContent = 'Tidak ada QR';
+          }
+          tr.appendChild(tdQrData);
+
+          // isReady (status)
+          const tdReady = document.createElement('td');
+          tdReady.textContent = s.isReady ? 'Ready' : 'Belum siap';
+          tr.appendChild(tdReady);
+
+          // createdAt
+          const tdCreated = document.createElement('td');
+          tdCreated.textContent = new Date(s.createdAt).toLocaleString();
+          tr.appendChild(tdCreated);
+
+          // updatedAt
+          const tdUpdated = document.createElement('td');
+          tdUpdated.textContent = new Date(s.updatedAt).toLocaleString();
+          tr.appendChild(tdUpdated);
+
+          // button hapus
+          const tdDelete = document.createElement('td');
+          const btnDelete = document.createElement('button');
+          btnDelete.textContent = 'Hapus';
+          btnDelete.addEventListener('click', async () => {
+            try {
+              await fetch(`/api/sessions/${s.sessionId}`, { method: 'DELETE' });
+              loadSessions();
+            } catch (err) {
+              console.error(`Gagal hapus session ${s.sessionId}:`, err);
+            }
+          });
+          tdDelete.appendChild(btnDelete);
+          tr.appendChild(tdDelete);
+
+          tbody.appendChild(tr);
+        });
+      } catch (err) {
+        console.error('Gagal load sessions:', err);
+        const tbody = document.querySelector('#sessions-table tbody');
+        tbody.innerHTML = '<tr><td colspan="5">Gagal memuat data.</td></tr>';
+      }
+    }
+
+    loadSessions();
+  </script>
+</body>
+</html>

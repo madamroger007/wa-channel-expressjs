@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WhatsApp Multi-Session Manager</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 600px;
+      margin: auto;
+    }
+
+    button {
+      padding: 10px 15px;
+      margin: 5px 0;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    #qr {
+      margin: 10px 0;
+      text-align: center;
+    }
+
+    #status {
+      font-weight: bold;
+      margin: 10px 0;
+      min-height: 1.5em;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 5px;
+      font-size: 1em;
+      box-sizing: border-box;
+    }
+
+    label {
+      display: block;
+      margin-top: 15px;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>WhatsApp Multi-Session Manager</h1>
+  <a href="/data.html" target="_self" class="button">Lihat Data</a>
+  <button id="btnCreateSession">Buat Session Baru</button>
+
+  <label for="sessionIdInput">Session ID:</label>
+  <input type="text" id="sessionIdInput" readonly />
+
+  <button id="btnStartSession" disabled>Mulai Session</button>
+
+  <div id="status"></div>
+  <div id="qr"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const btnCreateSession = document.getElementById('btnCreateSession');
+    const btnStartSession = document.getElementById('btnStartSession');
+    const btnViewData = document.getElementById('btnViewData');
+    const sessionIdInput = document.getElementById('sessionIdInput');
+    const statusDiv = document.getElementById('status');
+    const qrDiv = document.getElementById('qr');
+
+    let socket;
+    let currentSessionId;
+
+
+    btnCreateSession.onclick = async () => {
+      qrDiv.innerHTML = '';
+      statusDiv.textContent = '';
+      btnStartSession.disabled = true;
+      currentSessionId = null;
+      sessionIdInput.value = '';
+
+      try {
+        const res = await fetch('/create-session', { method: 'POST' });
+        if (!res.ok) throw new Error('Gagal mendapatkan session ID');
+        const data = await res.json();
+        currentSessionId = data.sessionId;
+        sessionIdInput.value = currentSessionId;
+        btnStartSession.disabled = false;
+        statusDiv.textContent = 'Session baru siap, silakan mulai session.';
+      } catch (err) {
+        statusDiv.textContent = 'Error: ' + err.message;
+      }
+    };
+
+    btnStartSession.onclick = async () => {
+      if (!currentSessionId) {
+        alert('Session ID belum dibuat');
+        return;
+      }
+
+      btnStartSession.disabled = true;
+      qrDiv.innerHTML = 'Mempersiapkan session...';
+      statusDiv.textContent = '';
+
+      if (socket) {
+        socket.disconnect();
+      }
+
+      socket = io();
+
+      socket.emit('join-session', currentSessionId);
+
+      socket.on('qr', (qr) => {
+        qrDiv.innerHTML = `<img src="${qr}" alt="QR Code" />`;
+        statusDiv.textContent = 'Scan QR dengan WhatsApp di HP Anda';
+      });
+
+      socket.on('ready', () => {
+        qrDiv.innerHTML = '';
+        statusDiv.textContent = '✅ WhatsApp session sudah siap!';
+      });
+
+      socket.on('auth_failure', () => {
+        qrDiv.innerHTML = '';
+        statusDiv.textContent = '❌ Autentikasi gagal, coba mulai ulang session.';
+        btnStartSession.disabled = false;
+      });
+
+      socket.on('disconnected', () => {
+        qrDiv.innerHTML = '';
+        statusDiv.textContent = '⚠️ WhatsApp session terputus.';
+        btnStartSession.disabled = false;
+      });
+
+      try {
+        const res = await fetch('/start-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: currentSessionId }),
+        });
+        const result = await res.json();
+
+        if (result.status === 'exists') {
+          statusDiv.textContent = 'Session sudah berjalan.';
+        } else if (result.error) {
+          statusDiv.textContent = 'Error: ' + result.error;
+          btnStartSession.disabled = false;
+        }
+      } catch (err) {
+        statusDiv.textContent = 'Error memulai session: ' + err.message;
+        btnStartSession.disabled = false;
+      }
+    };
+  </script>
+</body>
+
+</html>
