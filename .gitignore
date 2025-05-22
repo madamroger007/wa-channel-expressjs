@@ -30,4 +30,4 @@ out/
 coverage/
 
 .wwebjs_auth
-.wwebjs_auth
+.wwebjs_cache
