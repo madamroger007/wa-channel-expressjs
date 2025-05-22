@@ -1,5 +1,5 @@
 const express = require('express');
-const { Client, LocalAuth } = require('whatsapp-web.js'); // Ganti LegacySessionAuth ke LocalAuth
+const { Client, LegacySessionAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const http = require('http');
 const socketIO = require('socket.io');
@@ -48,38 +48,31 @@ app.post('/start-session', async (req, res) => {
   if (clients[sessionId]) return res.json({ status: 'exists' });
 
   try {
-    // Karena kita pakai LocalAuth, tidak perlu simpan sessionData secara manual
-    // LocalAuth akan menyimpan session otomatis di folder ./wa-sessions/sessionId
+    const dbSession = await Session.findByPk(sessionId);
+    const sessionData = dbSession?.sessionData || undefined;
+
     const client = new Client({
-      authStrategy: new LocalAuth({ clientId: sessionId, dataPath: './wa-sessions' }),
+      authStrategy: new LegacySessionAuth({ session: sessionData }),
       puppeteer: { headless: true, args: ['--no-sandbox'] }
     });
 
     clients[sessionId] = client;
 
     client.on('qr', async (qr) => {
-      try {
-        const qrImageUrl = await qrcode.toDataURL(qr);
-        io.to(sessionId).emit('qr', qrImageUrl);
+      const qrImageUrl = await qrcode.toDataURL(qr);
+      io.to(sessionId).emit('qr', qrImageUrl);
+      await Session.upsert({ sessionId, qrData: qrImageUrl, isReady: false });
+    });
 
-        // Simpan QR ke DB, clear isReady karena belum login
-        await Session.upsert({ sessionId, qrData: qrImageUrl, isReady: false });
-      } catch (err) {
-        console.error('❌ Gagal generate QR:', err);
-      }
+    client.on('authenticated', async (session) => {
+      await Session.upsert({ sessionId, sessionData: session, qrData: null, isReady: false });
+      console.log(`🔐 Client ${sessionId} authenticated`);
     });
 
     client.on('ready', async () => {
       io.to(sessionId).emit('ready');
       await Session.update({ isReady: true, qrData: null }, { where: { sessionId } });
       console.log(`✅ Client ${sessionId} siap`);
-    });
-
-    client.on('authenticated', async () => {
-      // Saat menggunakan LocalAuth, session disimpan otomatis di filesystem
-      // Tapi tetap bisa update status ke DB
-      await Session.update({ isReady: false, qrData: null }, { where: { sessionId } });
-      console.log(`🔐 Client ${sessionId} authenticated`);
     });
 
     client.on('auth_failure', async () => {
@@ -207,7 +200,7 @@ async function restoreSessions() {
       if (clients[sessionId]) continue;
 
       const client = new Client({
-        authStrategy: new LocalAuth({ clientId: sessionId, dataPath: './wa-sessions' }),
+        authStrategy: new LegacySessionAuth({ session: sess.sessionData }),
         puppeteer: { headless: true, args: ['--no-sandbox'] }
       });
 
@@ -217,23 +210,23 @@ async function restoreSessions() {
         console.log(`✅ Session ${sessionId} restored`);
       });
 
-      client.on('authenticated', async () => {
-        await Session.update({ isReady: true }, { where: { sessionId } });
-        console.log(`🔐 Session WhatsApp client ${sessionId} disimpan (restore)`);
+      client.on('authenticated', async (session) => {
+        await Session.update({ sessionData: session, isReady: true }, { where: { sessionId } });
+        console.log(`🔐 Session ${sessionId} authenticated (restored)`);
       });
 
       client.on('auth_failure', async () => {
-        console.log(`❌ Auth failure on restored session ${sessionId}`);
         await client.destroy();
         delete clients[sessionId];
         await Session.destroy({ where: { sessionId } });
+        console.log(`❌ Auth failure on restored session ${sessionId}`);
       });
 
       client.on('disconnected', async () => {
-        console.log(`⚠️ Session ${sessionId} disconnected (restore)`);
         await client.destroy();
         delete clients[sessionId];
         await Session.update({ isReady: false }, { where: { sessionId } });
+        console.log(`⚠️ Session ${sessionId} disconnected`);
       });
 
       await client.initialize();
