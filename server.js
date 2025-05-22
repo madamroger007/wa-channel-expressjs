@@ -1,11 +1,9 @@
 const express = require('express');
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth } = require('whatsapp-web.js'); // Ganti LegacySessionAuth ke LocalAuth
 const qrcode = require('qrcode');
 const http = require('http');
 const socketIO = require('socket.io');
 const crypto = require('crypto');
-const path = require('path');
-const fs = require('fs');
 const { Op } = require('sequelize');
 
 const sequelize = require('./config/database');
@@ -22,14 +20,6 @@ const clients = {};
 
 function isValidSessionId(id) {
   return typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test(id);
-}
-
-function deleteLocalAuthFolder(sessionId) {
-  const authPath = path.resolve(__dirname, `./.wwebjs_auth_${sessionId}`);
-  if (fs.existsSync(authPath)) {
-    fs.rmSync(authPath, { recursive: true, force: true });
-    console.log(`🗑️ Deleted auth folder for sessionId ${sessionId}`);
-  }
 }
 
 (async () => {
@@ -58,8 +48,10 @@ app.post('/start-session', async (req, res) => {
   if (clients[sessionId]) return res.json({ status: 'exists' });
 
   try {
+    // Karena kita pakai LocalAuth, tidak perlu simpan sessionData secara manual
+    // LocalAuth akan menyimpan session otomatis di folder ./wa-sessions/sessionId
     const client = new Client({
-      authStrategy: new LocalAuth({ clientId: sessionId }),
+      authStrategy: new LocalAuth({ clientId: sessionId, dataPath: './wa-sessions' }),
       puppeteer: { headless: true, args: ['--no-sandbox'] }
     });
 
@@ -70,6 +62,7 @@ app.post('/start-session', async (req, res) => {
         const qrImageUrl = await qrcode.toDataURL(qr);
         io.to(sessionId).emit('qr', qrImageUrl);
 
+        // Simpan QR ke DB, clear isReady karena belum login
         await Session.upsert({ sessionId, qrData: qrImageUrl, isReady: false });
       } catch (err) {
         console.error('❌ Gagal generate QR:', err);
@@ -78,7 +71,15 @@ app.post('/start-session', async (req, res) => {
 
     client.on('ready', async () => {
       io.to(sessionId).emit('ready');
-      await Session.upsert({ sessionId, isReady: true });
+      await Session.update({ isReady: true, qrData: null }, { where: { sessionId } });
+      console.log(`✅ Client ${sessionId} siap`);
+    });
+
+    client.on('authenticated', async () => {
+      // Saat menggunakan LocalAuth, session disimpan otomatis di filesystem
+      // Tapi tetap bisa update status ke DB
+      await Session.update({ isReady: false, qrData: null }, { where: { sessionId } });
+      console.log(`🔐 Client ${sessionId} authenticated`);
     });
 
     client.on('auth_failure', async () => {
@@ -86,7 +87,7 @@ app.post('/start-session', async (req, res) => {
       await client.destroy();
       delete clients[sessionId];
       await Session.destroy({ where: { sessionId } });
-      deleteLocalAuthFolder(sessionId);
+      console.log(`❌ Auth gagal, session ${sessionId} dihapus`);
     });
 
     client.on('disconnected', async () => {
@@ -94,7 +95,7 @@ app.post('/start-session', async (req, res) => {
       await client.destroy();
       delete clients[sessionId];
       await Session.update({ isReady: false }, { where: { sessionId } });
-      deleteLocalAuthFolder(sessionId);
+      console.log(`⚠️ Client ${sessionId} disconnected`);
     });
 
     console.log(`⚙️ Initializing client ${sessionId}...`);
@@ -156,7 +157,6 @@ app.delete('/api/sessions/:sessionId', async (req, res) => {
     }
 
     await Session.destroy({ where: { sessionId } });
-    deleteLocalAuthFolder(sessionId);
     res.json({ status: 'success', message: `Session ${sessionId} berhasil dihapus` });
   } catch (err) {
     console.error(`❌ Gagal hapus session ${sessionId}:`, err);
@@ -191,7 +191,6 @@ setInterval(async () => {
 
     for (const sess of expired) {
       await Session.destroy({ where: { sessionId: sess.sessionId } });
-      deleteLocalAuthFolder(sess.sessionId);
       console.log(`🧹 Session ${sess.sessionId} expired & dibersihkan`);
     }
   } catch (err) {
@@ -208,7 +207,7 @@ async function restoreSessions() {
       if (clients[sessionId]) continue;
 
       const client = new Client({
-        authStrategy: new LocalAuth({ clientId: sessionId }),
+        authStrategy: new LocalAuth({ clientId: sessionId, dataPath: './wa-sessions' }),
         puppeteer: { headless: true, args: ['--no-sandbox'] }
       });
 
@@ -218,31 +217,33 @@ async function restoreSessions() {
         console.log(`✅ Session ${sessionId} restored`);
       });
 
+      client.on('authenticated', async () => {
+        await Session.update({ isReady: true }, { where: { sessionId } });
+        console.log(`🔐 Session WhatsApp client ${sessionId} disimpan (restore)`);
+      });
+
       client.on('auth_failure', async () => {
         console.log(`❌ Auth failure on restored session ${sessionId}`);
         await client.destroy();
         delete clients[sessionId];
         await Session.destroy({ where: { sessionId } });
-        deleteLocalAuthFolder(sessionId);
       });
 
       client.on('disconnected', async () => {
-        console.log(`⚠️ Restored session ${sessionId} disconnected`);
+        console.log(`⚠️ Session ${sessionId} disconnected (restore)`);
         await client.destroy();
         delete clients[sessionId];
         await Session.update({ isReady: false }, { where: { sessionId } });
-        deleteLocalAuthFolder(sessionId);
       });
 
       await client.initialize();
-      console.log(`🔄 Restoring client ${sessionId}`);
     }
   } catch (err) {
     console.error('❌ Gagal restore sessions:', err);
   }
 }
 
-const PORT = 4000;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
 });
