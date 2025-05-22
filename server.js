@@ -1,9 +1,11 @@
 const express = require('express');
-const { Client, LegacySessionAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const http = require('http');
 const socketIO = require('socket.io');
 const crypto = require('crypto');
+const path = require('path');
+const fs = require('fs');
 const { Op } = require('sequelize');
 
 const sequelize = require('./config/database');
@@ -20,6 +22,14 @@ const clients = {};
 
 function isValidSessionId(id) {
   return typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test(id);
+}
+
+function deleteLocalAuthFolder(sessionId) {
+  const authPath = path.resolve(__dirname, `./.wwebjs_auth_${sessionId}`);
+  if (fs.existsSync(authPath)) {
+    fs.rmSync(authPath, { recursive: true, force: true });
+    console.log(`🗑️ Deleted auth folder for sessionId ${sessionId}`);
+  }
 }
 
 (async () => {
@@ -48,31 +58,27 @@ app.post('/start-session', async (req, res) => {
   if (clients[sessionId]) return res.json({ status: 'exists' });
 
   try {
-    const dbSession = await Session.findByPk(sessionId);
-    const sessionData = dbSession?.sessionData || undefined;
-
     const client = new Client({
-      authStrategy: new LegacySessionAuth({ session: sessionData }),
+      authStrategy: new LocalAuth({ clientId: sessionId }),
       puppeteer: { headless: true, args: ['--no-sandbox'] }
     });
 
     clients[sessionId] = client;
 
     client.on('qr', async (qr) => {
-      const qrImageUrl = await qrcode.toDataURL(qr);
-      io.to(sessionId).emit('qr', qrImageUrl);
-      await Session.upsert({ sessionId, qrData: qrImageUrl, isReady: false });
-    });
+      try {
+        const qrImageUrl = await qrcode.toDataURL(qr);
+        io.to(sessionId).emit('qr', qrImageUrl);
 
-    client.on('authenticated', async (session) => {
-      await Session.upsert({ sessionId, sessionData: session, qrData: null, isReady: false });
-      console.log(`🔐 Client ${sessionId} authenticated`);
+        await Session.upsert({ sessionId, qrData: qrImageUrl, isReady: false });
+      } catch (err) {
+        console.error('❌ Gagal generate QR:', err);
+      }
     });
 
     client.on('ready', async () => {
       io.to(sessionId).emit('ready');
-      await Session.update({ isReady: true, qrData: null }, { where: { sessionId } });
-      console.log(`✅ Client ${sessionId} siap`);
+      await Session.upsert({ sessionId, isReady: true });
     });
 
     client.on('auth_failure', async () => {
@@ -80,7 +86,7 @@ app.post('/start-session', async (req, res) => {
       await client.destroy();
       delete clients[sessionId];
       await Session.destroy({ where: { sessionId } });
-      console.log(`❌ Auth gagal, session ${sessionId} dihapus`);
+      deleteLocalAuthFolder(sessionId);
     });
 
     client.on('disconnected', async () => {
@@ -88,7 +94,7 @@ app.post('/start-session', async (req, res) => {
       await client.destroy();
       delete clients[sessionId];
       await Session.update({ isReady: false }, { where: { sessionId } });
-      console.log(`⚠️ Client ${sessionId} disconnected`);
+      deleteLocalAuthFolder(sessionId);
     });
 
     console.log(`⚙️ Initializing client ${sessionId}...`);
@@ -150,6 +156,7 @@ app.delete('/api/sessions/:sessionId', async (req, res) => {
     }
 
     await Session.destroy({ where: { sessionId } });
+    deleteLocalAuthFolder(sessionId);
     res.json({ status: 'success', message: `Session ${sessionId} berhasil dihapus` });
   } catch (err) {
     console.error(`❌ Gagal hapus session ${sessionId}:`, err);
@@ -184,6 +191,7 @@ setInterval(async () => {
 
     for (const sess of expired) {
       await Session.destroy({ where: { sessionId: sess.sessionId } });
+      deleteLocalAuthFolder(sess.sessionId);
       console.log(`🧹 Session ${sess.sessionId} expired & dibersihkan`);
     }
   } catch (err) {
@@ -200,7 +208,7 @@ async function restoreSessions() {
       if (clients[sessionId]) continue;
 
       const client = new Client({
-        authStrategy: new LegacySessionAuth({ session: sess.sessionData }),
+        authStrategy: new LocalAuth({ clientId: sessionId }),
         puppeteer: { headless: true, args: ['--no-sandbox'] }
       });
 
@@ -210,33 +218,31 @@ async function restoreSessions() {
         console.log(`✅ Session ${sessionId} restored`);
       });
 
-      client.on('authenticated', async (session) => {
-        await Session.update({ sessionData: session, isReady: true }, { where: { sessionId } });
-        console.log(`🔐 Session ${sessionId} authenticated (restored)`);
-      });
-
       client.on('auth_failure', async () => {
+        console.log(`❌ Auth failure on restored session ${sessionId}`);
         await client.destroy();
         delete clients[sessionId];
         await Session.destroy({ where: { sessionId } });
-        console.log(`❌ Auth failure on restored session ${sessionId}`);
+        deleteLocalAuthFolder(sessionId);
       });
 
       client.on('disconnected', async () => {
+        console.log(`⚠️ Restored session ${sessionId} disconnected`);
         await client.destroy();
         delete clients[sessionId];
         await Session.update({ isReady: false }, { where: { sessionId } });
-        console.log(`⚠️ Session ${sessionId} disconnected`);
+        deleteLocalAuthFolder(sessionId);
       });
 
       await client.initialize();
+      console.log(`🔄 Restoring client ${sessionId}`);
     }
   } catch (err) {
     console.error('❌ Gagal restore sessions:', err);
   }
 }
 
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
 });

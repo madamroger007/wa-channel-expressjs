@@ -17,10 +17,6 @@ module.exports = {
         allowNull: false,
         defaultValue: false
       },
-      sessionData: {
-        type: Sequelize.JSON, // Tipe JSON untuk menyimpan session WA
-        allowNull: true
-      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE,
@@ -30,8 +26,6 @@ module.exports = {
         allowNull: false,
         type: Sequelize.DATE,
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
-        // Untuk MySQL bisa pakai ON UPDATE CURRENT_TIMESTAMP,
-        // tapi kalau tidak support, update manual lewat kode
       }
     });
   },
