@@ -30,13 +30,18 @@ module.exports = {
     },
   },
   production: {
-    use_env_variable: 'DATABASE_URL',
+    username: process.env.PGUSER,
+    password: process.env.PGPASSWORD,
+    database: process.env.PGDATABASE,
+    host: process.env.PGHOST,
+    port: 5432,
     dialect: 'postgres',
     dialectOptions: {
       ssl: {
         require: true,
-        rejectUnauthorized: false, // important for Neon
+        rejectUnauthorized: false,
       },
     },
   },
+
 };
