@@ -119,27 +119,38 @@ app.get('/api/sessions', async (req, res) => {
 app.post('/send-message', async (req, res) => {
   const { sessionId, number, message } = req.body;
 
+  console.log("📥 Payload diterima:", req.body);
+
   if (!sessionId || !number || !message) {
+    console.log("❌ Field kosong:", { sessionId, number, message });
     return res.status(400).json({ error: 'sessionId, number, dan message wajib diisi' });
   }
 
   const client = clients[sessionId];
-  if (!client) return res.status(400).json({ error: 'Session tidak ditemukan atau belum siap' });
+  if (!client) {
+    console.log("❌ Session tidak ditemukan:", sessionId);
+    return res.status(400).json({ error: 'Session tidak ditemukan atau belum siap' });
+  }
 
   try {
     const formattedNumber = number.replace(/\D/g, '') + '@c.us';
     const isRegistered = await client.isRegisteredUser(formattedNumber);
+
     if (!isRegistered) {
+      console.log("❌ Nomor tidak terdaftar:", formattedNumber);
       return res.status(400).json({ error: 'Nomor tidak terdaftar di WhatsApp' });
     }
 
     await client.sendMessage(formattedNumber, message);
+    console.log(`✅ Pesan dikirim ke ${formattedNumber}`);
     res.json({ status: 'success', message: 'Pesan berhasil dikirim' });
+
   } catch (err) {
     console.error('❌ Gagal kirim pesan:', err);
     res.status(500).json({ error: 'Gagal mengirim pesan' });
   }
 });
+
 
 app.delete('/api/sessions/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
@@ -243,6 +254,6 @@ async function restoreSessions() {
 }
 
 const PORT = 3000;
-server.listen(3000, '0.0.0.0', () => {
-  console.log(`🚀 Server berjalan di http://0.0.0.0:3000`);
+server.listen(PORT, () => {
+  console.log(`🚀 Server berjalan di http://localhost:3000`);
 });
