@@ -243,6 +243,6 @@ async function restoreSessions() {
 }
 
 const PORT = 3000;
-server.listen(PORT, () => {
-  console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
+server.listen(3000, '0.0.0.0', () => {
+  console.log(`🚀 Server berjalan di http://0.0.0.0:3000`);
 });
